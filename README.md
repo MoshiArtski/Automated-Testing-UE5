@@ -91,7 +91,3 @@ Contributions to this script are welcome. Please submit pull requests or report 
 N/A
 
 
-## License
-
-N/A
-
