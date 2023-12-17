@@ -1,4 +1,4 @@
-#include "CoreMinimal.h"
+##include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "HAL/FileManager.h"
@@ -10,26 +10,22 @@
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetUsageTest, "Project.AssetUsageTest", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-
 bool FAssetUsageTest::RunTest(const FString& Parameters)
 {
-    FString CsvContent = "Asset Name,Asset Path,Asset Type,Is Used,Referenced By,Source Tag\n"; 
+    FString CsvContent = "Asset Name,Asset Path,Asset Type,Referenced By,Source Tag,Asset Size,Asset Classification\n"; 
 
     FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
     TArray<FAssetData> AssetDataList;
-    AssetRegistryModule.Get().GetAllAssets(AssetDataList);
+    AssetRegistryModule.Get().GetAllAssets(AssetDataList, true);
 
     UEditorAssetSubsystem* EditorAssetSubsystem = GEditor->GetEditorSubsystem<UEditorAssetSubsystem>();
-
 
     TArray<FString> UnusedAssetList;
     bool bHasUnusedAssets = false;
 
     for (const FAssetData& Asset : AssetDataList)
     {
-        FString AssetPath = Asset.GetSoftObjectPath().ToString();
-
-        // Check if the asset is part of the project (not an Engine asset)
+        FString AssetPath = Asset.GetObjectPathString();
         if (AssetPath.StartsWith(TEXT("/Game/")))
         {
             FString AssetName = Asset.AssetName.ToString();
@@ -39,40 +35,36 @@ bool FAssetUsageTest::RunTest(const FString& Parameters)
             FString SourceMetadata = EditorAssetSubsystem->GetMetadataTag(AssetObject, FName("Source"));
 
             TArray<FName> Referencers;
-            AssetRegistryModule.Get().GetReferencers(Asset.PackageName, Referencers);
+            AssetRegistryModule.Get().GetReferencers(Asset.PackageName, Referencers, UE::AssetRegistry::EDependencyCategory::Package);
 
-            FString ReferencersList = TEXT("");
-            for (const FName& Referencer : Referencers)
+            int64 AssetSize = 0;
+            if (FAssetPackageData AssetPackageData; AssetRegistryModule.Get().TryGetAssetPackageData(Asset.PackageName, AssetPackageData) == UE::AssetRegistry::EExists::Exists)
             {
-                ReferencersList += Referencer.ToString() + TEXT("; ");
+                AssetSize = AssetPackageData.DiskSize;
             }
 
-            bool bIsUsed = Referencers.Num() > 0;
-            if (!bIsUsed)
+            FString AssetClassification = TEXT("Used");
+            if (Referencers.Num() == 0)
             {
+                AssetClassification = TEXT("Unused");
                 UnusedAssetList.Add(AssetPath);
                 bHasUnusedAssets = true;
             }
 
-            // Escape commas in data and append to CSV string
-            FString EscapedAssetName = AssetName.Contains(TEXT(",")) ? TEXT("\"") + AssetName + TEXT("\"") : AssetName;
-            FString EscapedAssetPath = AssetPath.Contains(TEXT(",")) ? TEXT("\"") + AssetPath + TEXT("\"") : AssetPath;
-            FString EscapedAssetType = AssetType.Contains(TEXT(",")) ? TEXT("\"") + AssetType + TEXT("\"") : AssetType;
-            FString EscapedReferencersList = ReferencersList.Contains(TEXT(",")) ? TEXT("\"") + ReferencersList + TEXT("\"") : ReferencersList;
-            FString EscapedSourceMetadata = SourceMetadata.Contains(TEXT(",")) ? TEXT("\"") + SourceMetadata + TEXT("\"") : SourceMetadata;
-   
-            CsvContent += FString::Printf(TEXT("%s,%s,%s,%s,%s,%s\n"), *EscapedAssetName, *EscapedAssetPath, *EscapedAssetType, bIsUsed ? TEXT("Yes") : TEXT("No"), *EscapedReferencersList, *EscapedSourceMetadata);
-   }
+            FString EscapedAssetName = AssetName.Replace(TEXT(","), TEXT(" "));
+            FString EscapedAssetPath = AssetPath.Replace(TEXT(","), TEXT(" "));
+            FString EscapedAssetType = AssetType.Replace(TEXT(","), TEXT(" "));
+            FString EscapedReferencersList = FString::JoinBy(Referencers, TEXT("; "), [](const FName& Name) { return Name.ToString(); });
+            FString EscapedSourceMetadata = SourceMetadata.Replace(TEXT(","), TEXT(" "));
+
+            CsvContent += FString::Printf(TEXT("%s,%s,%s,%s,%s,%lld,%s\n"), *EscapedAssetName, *EscapedAssetPath, *EscapedAssetType, *EscapedReferencersList, *EscapedSourceMetadata, AssetSize, *AssetClassification);
+        }
     }
 
-    // Generate CSV file path
     FString CsvFilePath = FPaths::ProjectLogDir() / TEXT("AssetUsageReport.csv");
-    UE_LOG(LogTemp, Log, TEXT("Saving CSV to: %s"), *CsvFilePath);
-
-    // Save to CSV
     if (FFileHelper::SaveStringToFile(CsvContent, *CsvFilePath))
     {
-        UE_LOG(LogTemp, Log, TEXT("CSV file saved successfully."));
+        UE_LOG(LogTemp, Log, TEXT("CSV file saved successfully at: %s"), *CsvFilePath);
     }
     else
     {
@@ -80,7 +72,6 @@ bool FAssetUsageTest::RunTest(const FString& Parameters)
         AddError(FString::Printf(TEXT("Failed to save CSV file to: %s"), *CsvFilePath));
     }
 
-    // Report unused assets
     if (bHasUnusedAssets)
     {
         for (const FString& UnusedAsset : UnusedAssetList)
